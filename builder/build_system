@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Entry point for `build_system <component> <branch> [--push]`. See cli.py."""
+import sys
+from pathlib import Path
+
+# Resolve symlinks (/usr/local/bin/build_system -> .../builder/build_system)
+# so the sibling packages (common/, components/) import from the real dir.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    main()

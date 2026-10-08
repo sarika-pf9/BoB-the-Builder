@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}cleanup - vjailbreak build dashboard{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>Docker (local)</h2>
+  <p class="hint">
+    Runs <code>docker image prune -f</code> on this host right now, instead of waiting for the
+    next build to finish it automatically. Only removes untagged/dangling layers &mdash; a
+    named or tagged image is never touched, so this is safe to run at any time.
+  </p>
+  {% if docker_msg %}
+    <pre class="wget-hint">{{ docker_msg }}</pre>
+  {% endif %}
+  <form method="post" action="/cleanup/docker">
+    <button type="submit">Prune local docker images</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Build records</h2>
+  <p class="hint">
+    Permanently deletes finished build records (success, failed, or canceled) older than the
+    age below &mdash; the database row, its log file, and its qcow2 artifact (if any), all
+    together. This is separate from, and more aggressive than, the automatic background
+    cleanup: that only ever ages out qcow2 and log files on disk and never touches build
+    history. This does, and it cannot be undone. A queued or currently-running build is never
+    affected, no matter how old.
+  </p>
+  <p class="hint">
+    Currently on this host: {{ purge_candidates }} finished build record(s),
+    {{ qcow2_count }} qcow2 file(s), {{ log_count }} log file(s).
+  </p>
+  {% if builds_msg %}
+    <pre class="wget-hint">{{ builds_msg }}</pre>
+  {% endif %}
+  <form method="post" action="/cleanup/builds"
+        onsubmit="return confirm('Permanently delete matching build records (database row + log + qcow2)? This cannot be undone.');">
+    <label>
+      Older than (hours)
+      <input type="number" name="older_than_hours" min="0" step="1" value="{{ default_older_than_hours }}" required>
+    </label>
+    <button type="submit" class="secondary">Delete matching build records</button>
+  </form>
+</section>
+
+{% endblock %}

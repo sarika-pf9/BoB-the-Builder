@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}build {{ build.id }} - vjailbreak build dashboard{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>Build {{ build.id }}</h2>
+  <dl class="meta">
+    <dt>Component</dt><dd>{{ build.component }}</dd>
+    <dt>Branch</dt><dd class="branch">{{ build.branch }}</dd>
+    <dt>Push</dt><dd>{{ "yes" if build.push else "no" }}</dd>
+    <dt>Status</dt><dd><span id="status" class="status status-{{ build.status }}">{{ build.status }}</span></dd>
+    <dt>Elapsed</dt><dd id="elapsed">-</dd>
+    <dt>Created</dt><dd>{{ build.created_at }}</dd>
+    <dt>Started</dt><dd>{{ build.started_at or "-" }}</dd>
+    <dt>Finished</dt><dd id="finished">{{ build.finished_at or "-" }}</dd>
+    <dt id="note-label" style="{{ '' if build.note else 'display:none;' }}">Note</dt>
+    <dd id="note-value" style="{{ '' if build.note else 'display:none;' }}">{{ build.note or "" }}</dd>
+  </dl>
+
+  <div id="action-area"></div>
+  <div id="download-area"></div>
+</section>
+
+<section class="card">
+  <div class="card-header">
+    <h2>Log</h2>
+    <button type="button" class="secondary" id="copy-log-btn">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="4" y="3" width="8" height="11" rx="1.2" stroke="currentColor" stroke-width="1.3"/>
+        <rect x="6" y="1.3" width="4" height="2.4" rx="0.6" fill="currentColor"/>
+      </svg>
+      Copy logs
+    </button>
+  </div>
+  <pre id="log">{{ initial_log }}</pre>
+</section>
+
+<p><a href="/">&larr; back to dashboard</a></p>
+
+<script>
+  // ---------------------------------------------------------------------
+  // Plain polling, on purpose - see the note at the top of app.py. This page
+  // has no live-tailing connection of any kind. Every POLL_INTERVAL_MS it
+  // fetches the build's full status (JSON) and its full log (plain text,
+  // always from byte 0) and replaces the on-page display wholesale. There is
+  // no byte offset, no "since last time", nothing to resume or desync - a
+  // missed or slow poll just means the page catches up a few seconds later
+  // on the next one, instead of the multi-way SSE reconnect/thread-pool bugs
+  // this replaced.
+  // ---------------------------------------------------------------------
+  const buildId = {{ build.id | tojson }};
+  const initialStatus = {{ build.status | tojson }};
+  const createdAtMs = new Date({{ build.created_at | tojson }}).getTime();
+  const idleTimeoutSeconds = {{ idle_timeout_seconds | tojson }};
+  const POLL_INTERVAL_MS = 3000;
+  const TERMINAL = ["success", "failed", "canceled"];
+
+  const logEl = document.getElementById("log");
+  const statusEl = document.getElementById("status");
+  const elapsedEl = document.getElementById("elapsed");
+  const finishedEl = document.getElementById("finished");
+  const noteLabelEl = document.getElementById("note-label");
+  const noteValueEl = document.getElementById("note-value");
+  const actionArea = document.getElementById("action-area");
+  const downloadArea = document.getElementById("download-area");
+  const copyLogBtn = document.getElementById("copy-log-btn");
+  const copyLogBtnLabel = copyLogBtn.lastChild; // the trailing " Copy logs" text node, left alone by the icon svg before it
+
+  copyLogBtn.addEventListener("click", async () => {
+    const text = logEl.textContent;
+    let ok = true;
+    // navigator.clipboard requires a secure context (HTTPS or localhost) -
+    // this dashboard is plain HTTP on an internal IP, so it's routinely
+    // unavailable here. Fall back to the older select+execCommand trick,
+    // which still works over plain HTTP, instead of just failing silently.
+    if (window.isSecureContext && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        ok = false;
+      }
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        ok = document.execCommand("copy");
+      } catch (e) {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+    }
+    const original = copyLogBtnLabel.textContent;
+    copyLogBtnLabel.textContent = ok ? " Copied!" : " Copy failed";
+    copyLogBtn.disabled = true;
+    setTimeout(() => {
+      copyLogBtnLabel.textContent = original;
+      copyLogBtn.disabled = false;
+    }, 1500);
+  });
+
+  // Elapsed/duration display - ticks once a second on its own timer,
+  // independent of the 3s status/log poll below, so the number doesn't look
+  // like it's stuttering. It only ever reads state that pollOnce() already
+  // updates (elapsedStatus/elapsedStartedAtMs/elapsedFinishedAtMs); it never
+  // fetches anything itself.
+  let elapsedStatus = initialStatus;
+  let elapsedStartedAtMs = {{ build.started_at | tojson }} ? new Date({{ build.started_at | tojson }}).getTime() : null;
+  let elapsedFinishedAtMs = {{ build.finished_at | tojson }} ? new Date({{ build.finished_at | tojson }}).getTime() : null;
+
+  function formatElapsed(totalSeconds) {
+    totalSeconds = Math.max(0, Math.floor(totalSeconds));
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const mm = String(m).padStart(2, "0");
+    const ss = String(s).padStart(2, "0");
+    if (h > 0) return `${h}h ${mm}m ${ss}s`;
+    if (m > 0) return `${m}m ${ss}s`;
+    return `${s}s`;
+  }
+
+  function renderElapsed() {
+    if (elapsedStatus === "queued") {
+      elapsedEl.textContent = `waiting ${formatElapsed((Date.now() - createdAtMs) / 1000)}`;
+    } else if (elapsedStatus === "running") {
+      const from = elapsedStartedAtMs || createdAtMs;
+      elapsedEl.textContent = formatElapsed((Date.now() - from) / 1000);
+    } else if (elapsedFinishedAtMs) {
+      // Terminal (success/failed/canceled) - a fixed duration, not ticking.
+      // Falls back to createdAtMs for a build canceled while still queued
+      // (it never got a started_at at all), so this reads as "time to
+      // resolution" rather than showing nothing.
+      const from = elapsedStartedAtMs || createdAtMs;
+      elapsedEl.textContent = `took ${formatElapsed((elapsedFinishedAtMs - from) / 1000)}`;
+    } else {
+      elapsedEl.textContent = "-";
+    }
+  }
+
+  renderElapsed();
+  const elapsedTicker = setInterval(renderElapsed, 1000);
+
+  function renderActionArea(status, queuePosition) {
+    if (status === "queued") {
+      const posText = queuePosition === 0
+        ? "Next up once the current build finishes."
+        : `${queuePosition} build(s) ahead of this one.`;
+      actionArea.innerHTML =
+        `<p class="hint">${posText}</p>` +
+        `<form method="post" action="/builds/${buildId}/cancel">` +
+        `<button type="submit" class="secondary">Cancel (still queued)</button></form>`;
+    } else if (status === "running") {
+      actionArea.innerHTML =
+        `<form method="post" action="/builds/${buildId}/cancel" ` +
+        `onsubmit="return confirm('Kill this running build? This cannot be undone.');">` +
+        `<button type="submit" class="secondary">Kill running build</button></form>` +
+        `<p class="hint stalled-warning" id="stalled-banner" style="display:none;"></p>`;
+    } else {
+      actionArea.innerHTML = "";
+    }
+  }
+
+  function renderDownloadArea(downloadUrl) {
+    if (!downloadUrl) {
+      downloadArea.innerHTML = "";
+      return;
+    }
+    // downloadUrl is a plain static-file path under /artifacts (see
+    // build_status() in app.py) - a real file on disk, not a redirect or a
+    // dynamic route - so it's safe to hand this exact URL to an external
+    // image-import tool (e.g. Private Cloud Director's "Add Image" dialog),
+    // unlike the old /builds/{id}/download route some of those rejected
+    // outright. Shown as absolute + selectable, same as the wget hint on the
+    // home page, so it can just be copy-pasted rather than right-click-copy-
+    // link-address'd off the button.
+    const absoluteUrl = window.location.origin + downloadUrl;
+    downloadArea.innerHTML =
+      `<a href="${downloadUrl}" class="button">Download qcow2</a>` +
+      `<p class="hint" style="margin-top:0.75rem;">Resource URL for image-import tools (e.g. Private Cloud Director's "Add Image" &rarr; Image Download URL) &mdash; a plain static file, not a redirect:</p>` +
+      `<pre class="wget-hint">${absoluteUrl}</pre>`;
+  }
+
+  // The server force-kills a build after idleTimeoutSeconds of total silence
+  // (see BUILD_IDLE_TIMEOUT_SECONDS in app.py) rather than waiting forever -
+  // this just makes that visible *before* it happens instead of the page
+  // sitting there with no clue whether anything is still going on. Warn at
+  // the halfway point so there's time to notice and use the Kill button if
+  // it's obviously dead, without false-alarming on every normal quiet step
+  // (image pulls, `make dep`, etc).
+  let lastOutputAt = Date.now();
+  let lastLogLength = logEl.textContent.length;
+  function checkStalled() {
+    const banner = document.getElementById("stalled-banner");
+    if (!banner || statusEl.textContent !== "running") return;
+    const idleSeconds = (Date.now() - lastOutputAt) / 1000;
+    if (idleSeconds > idleTimeoutSeconds / 2) {
+      const idleMinutes = Math.floor(idleSeconds / 60);
+      const killMinutes = Math.floor(idleTimeoutSeconds / 60);
+      banner.textContent =
+        `No output for ${idleMinutes}m - this build may be stuck ` +
+        `(it will be automatically killed after ${killMinutes}m of silence).`;
+      banner.style.display = "";
+    } else {
+      banner.style.display = "none";
+    }
+  }
+
+  let pollTimer = null;
+
+  async function pollOnce() {
+    let statusResp, logText;
+    try {
+      const [sResp, lResp] = await Promise.all([
+        fetch(`/builds/${buildId}/status`),
+        fetch(`/builds/${buildId}/log`),
+      ]);
+      statusResp = await sResp.json();
+      logText = await lResp.text();
+    } catch (e) {
+      // A single failed poll (a brief network hiccup) isn't worth doing
+      // anything about - the next tick just tries again. Nothing here holds
+      // state that a missed poll could corrupt.
+      return;
+    }
+
+    if (logText.length !== lastLogLength) {
+      lastOutputAt = Date.now();
+      lastLogLength = logText.length;
+    }
+    const wasNearBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 40;
+    logEl.textContent = logText;
+    if (wasNearBottom) logEl.scrollTop = logEl.scrollHeight;
+
+    statusEl.textContent = statusResp.status;
+    statusEl.className = "status status-" + statusResp.status;
+    finishedEl.textContent = statusResp.finished_at || "-";
+    elapsedStatus = statusResp.status;
+    elapsedStartedAtMs = statusResp.started_at ? new Date(statusResp.started_at).getTime() : null;
+    elapsedFinishedAtMs = statusResp.finished_at ? new Date(statusResp.finished_at).getTime() : null;
+    renderElapsed();
+    if (statusResp.note) {
+      noteLabelEl.style.display = "";
+      noteValueEl.style.display = "";
+      noteValueEl.textContent = statusResp.note;
+    } else {
+      noteLabelEl.style.display = "none";
+      noteValueEl.style.display = "none";
+    }
+    renderActionArea(statusResp.status, statusResp.queue_position);
+    renderDownloadArea(statusResp.download_url);
+    checkStalled();
+
+    if (TERMINAL.includes(statusResp.status)) {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      clearInterval(elapsedTicker);
+    }
+  }
+
+  renderActionArea(initialStatus, {{ queue_position | tojson }});
+  pollOnce();
+  if (!TERMINAL.includes(initialStatus)) {
+    pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+  }
+</script>
+
+{% endblock %}

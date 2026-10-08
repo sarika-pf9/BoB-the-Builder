@@ -1,0 +1,324 @@
+:root {
+  color-scheme: light dark;
+  --border: #3a3a3a44;
+  --accent: #4f8cff;
+  --bg-card: #ffffff10;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0 1rem 3rem;
+  max-width: 900px;
+  margin-inline: auto;
+  line-height: 1.5;
+}
+
+/* Plain links had no rule of their own anywhere in this file, so they fell
+   back to the browser default (visited-purple/blue, underlined) - the one
+   spot in the whole page that didn't match the rest of the color scheme.
+   .brand and .button both already set their own color/text-decoration and
+   win on specificity, so this only changes bare links like "view", the
+   qcow2 pull-block wasn't a link, and "back to dashboard". */
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Purely decorative night-sky strips flanking the centered content column on
+   wide screens: a soft near-black vignette (not a hard opaque bar - it fades
+   to fully transparent well before reaching the content) with a scattering
+   of small starlight dots, plus one faint glow in var(--accent) so it still
+   ties back to the rest of the color scheme instead of being generic space
+   clip-art. Fixed positioning keeps it out of the document flow entirely
+   (zero effect on layout/scroll), z-index -1 keeps it behind every real
+   element, and pointer-events:none means it can never intercept a click.
+   Hidden below 1300px, where the centered 900px content plus two 150px side
+   panels would start crowding the viewport edges. */
+.side-deco {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 150px;
+  color: var(--accent);
+  pointer-events: none;
+  z-index: -1;
+  overflow: hidden;
+}
+.side-deco svg { width: 100%; height: 100%; display: block; }
+.side-deco-left {
+  left: 0;
+  /* Both stops are the same color with only the alpha channel changing (not
+     a stop fading into the bare "transparent" keyword) - some browsers
+     interpolate "transparent" as transparent BLACK regardless of the
+     adjacent color, which would otherwise leave a faint grey seam right at
+     the fade-out edge instead of a clean fade. */
+  background: linear-gradient(to right, rgba(3, 4, 10, 1) 0%, rgba(3, 4, 10, 1) 58%, rgba(3, 4, 10, 0) 100%);
+}
+.side-deco-right {
+  right: 0;
+  background: linear-gradient(to left, rgba(3, 4, 10, 1) 0%, rgba(3, 4, 10, 1) 58%, rgba(3, 4, 10, 0) 100%);
+}
+
+@media (max-width: 1300px) {
+  .side-deco { display: none; }
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+header .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 1.1rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+header .brand-logo {
+  flex: none;
+  display: block;
+}
+
+header .subtitle {
+  opacity: 0.6;
+  font-size: 0.85rem;
+}
+
+/* Dashboard / Cleanup nav, pushed to the far right of the header's flex row
+   (margin-left: auto) so it reads as a separate nav area rather than
+   crowding the brand/subtitle on the left. Underline-on-active rather than a
+   filled pill/background, to stay as quiet as the rest of this header. */
+header .tabs {
+  margin-left: auto;
+  display: flex;
+  gap: 1.25rem;
+}
+header .tabs a {
+  color: inherit;
+  opacity: 0.6;
+  font-size: 0.9rem;
+  text-decoration: none;
+  padding-bottom: 0.15rem;
+  border-bottom: 2px solid transparent;
+}
+header .tabs a:hover {
+  opacity: 1;
+  text-decoration: none;
+}
+header .tabs a.active {
+  opacity: 1;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.7;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.card-header h2 { margin-bottom: 0; }
+
+form label {
+  display: block;
+  margin-bottom: 0.9rem;
+  font-size: 0.9rem;
+}
+
+form label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+form input[type="text"], form select {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: 0.95rem;
+}
+
+button, .button {
+  display: inline-block;
+  padding: 0.55rem 1.1rem;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: inherit;
+}
+
+button svg {
+  vertical-align: -1px;
+  margin-right: 0.35rem;
+}
+
+/* "view"/"download" in the recent-builds table, styled as small pill-shaped
+   actions instead of plain inline links - easier to spot as clickable
+   actions at a glance, and download (green, matching .status-success) reads
+   as visually distinct from view (neutral) without needing any text beyond
+   the icon + label. */
+.row-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: inherit;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.link-pill:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.link-pill svg { flex: none; }
+
+.link-pill-download {
+  border-color: #2ecc7166;
+  color: #1fa35c;
+}
+.link-pill-download:hover {
+  border-color: #2ecc71;
+  background: #2ecc7114;
+  color: #1fa35c;
+}
+
+.hint { opacity: 0.6; font-size: 0.85rem; }
+
+.stalled-warning {
+  opacity: 1;
+  color: #ff4d4f;
+  border: 1px solid #ff4d4f66;
+  background: #ff4d4f14;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.scroll-box {
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.5rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+td.branch, dd.branch {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.elapsed-cell, #elapsed {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.status-queued   { background: #8886; }
+.status-running  { background: #4f8cff33; color: #4f8cff; }
+.status-success  { background: #2ecc7133; color: #1fa35c; }
+.status-failed   { background: #ff4d4f33; color: #ff4d4f; }
+.status-canceled { background: #8886; }
+
+dl.meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1rem;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+dl.meta dt { opacity: 0.6; }
+dl.meta dd { margin: 0; }
+
+#log {
+  background: #00000090;
+  color: #d8d8d8;
+  padding: 1rem;
+  border-radius: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.wget-hint {
+  background: #00000090;
+  color: #d8d8d8;
+  padding: 0.65rem 0.9rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  margin: 0.5rem 0 0;
+}

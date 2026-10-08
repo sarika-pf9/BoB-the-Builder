@@ -1,0 +1,17 @@
+# local settings - copy from config/bob.env.example, never commit
+bob.env
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# dashboard runtime data (build history, logs, qcow2 artifacts)
+dashboard/data/
+*.db
+*.log
+*.qcow2
+
+.DS_Store

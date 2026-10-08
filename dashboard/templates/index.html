@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card">
+  <h2>Start a build</h2>
+  <form method="post" action="/build">
+    <label>
+      Component
+      <select name="component" id="component" required>
+        {% for c in components %}
+          <option value="{{ c }}">{{ c }}{% if c == 'qcow2' %} (full image, ~6 min){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      Branch
+      <input type="text" name="branch" placeholder="private/main/sarika/test-wrkflw" required>
+    </label>
+
+    <p class="hint">
+      Every build pushes its component image(s) to your quay.io repos &mdash; for qcow2 that's
+      no longer optional (the manifests baked into the qcow2 reference those repos directly),
+      and a controller/ui/sdk/ai build never had a download link here in the first place, so
+      pushing was always the only way to get it out. Nothing to choose here.
+    </p>
+
+    <button type="submit">Build</button>
+  </form>
+  {% if queue_size > 0 %}
+    <p class="hint">{{ queue_size }} build(s) ahead in the queue.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Latest qcow2 (scriptable)</h2>
+  <p class="hint">
+    Always serves the most recently-built qcow2 - ready as soon as the disk image itself is
+    done, even if that build is still pushing component images to quay.io in the background.
+    No build id needed, so it's stable to hardcode in a script or CI job:
+  </p>
+  <pre class="wget-hint">wget {{ latest_download_url }} -O vjailbreak-image.qcow2</pre>
+  <p class="hint" style="margin-top:0.6rem;">
+    qcow2 files aren't kept forever &mdash; any image older than {{ qcow2_retention_hours }} hours
+    is deleted automatically to free disk space, whether or not a newer build has happened since
+    (checked periodically in the background, not just when a new build finishes). Up to
+    {{ keep_last_n_qcow2 }} are also kept as a safety margin regardless of age, in case a burst of
+    builds lands inside one retention window. Grab the one you need before it ages out.
+  </p>
+
+  <p class="hint" style="margin-top:1.1rem;">
+    Component builds (controller/ui/sdk/ai) don't have a download link here &mdash; they're pushed
+    straight to quay.io instead. Swap <code>&lt;tag&gt;</code> for the branch you built (there's no
+    <code>latest</code> tag, every image is tagged with its branch name):
+  </p>
+  <pre class="wget-hint">{% for component, repos in quay_repos_by_component.items() %}{% for repo in repos %}docker pull quay.io/{{ quay_namespace }}/{{ repo }}:&lt;tag&gt;
+{% endfor %}{% endfor %}</pre>
+</section>
+
+<section class="card">
+  <h2>Recent builds (last {{ build_history_hours }}h)</h2>
+  {% if not builds %}
+    <p class="hint">No builds in the last {{ build_history_hours }} hours.</p>
+  {% else %}
+  <div class="scroll-box">
+  <table>
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Component</th>
+        <th>Branch</th>
+        <th>Push</th>
+        <th>Status</th>
+        <th>Elapsed</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in builds %}
+      <tr class="build-row" data-status="{{ b.status }}" data-created-at="{{ b.created_at }}" data-started-at="{{ b.started_at or '' }}" data-finished-at="{{ b.finished_at or '' }}">
+        <td>{{ b.created_at }}</td>
+        <td>{{ b.component }}</td>
+        <td class="branch">{{ b.branch }}</td>
+        <td>{{ "yes" if b.push else "" }}</td>
+        <td><span class="status status-{{ b.status }}" {% if b.note %}title="{{ b.note }}"{% endif %}>{{ b.status }}</span></td>
+        <td class="elapsed-cell">-</td>
+        <td>
+          <span class="row-actions">
+            <a class="link-pill" href="/builds/{{ b.id }}">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5Z" stroke="currentColor" stroke-width="1.3"/>
+                <circle cx="8" cy="8" r="2" fill="currentColor"/>
+              </svg>
+              view
+            </a>
+            {% if b.qcow2_path %}
+              <a class="link-pill link-pill-download" href="/artifacts/{{ b.id }}.qcow2">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path d="M8 1v8m0 0L5 6m3 3 3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+                download
+              </a>
+            {% endif %}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+  // Elapsed column for the recent-builds table. This page doesn't poll the
+  // server at all (see build.html for that) - it's a snapshot as of page
+  // load, so a build that finishes while this tab sits open won't flip out
+  // of "running" here until the page is reloaded, same as its status badge
+  // already doesn't. What this DOES do live, entirely from timestamps
+  // already in the HTML, is keep a running build's elapsed time ticking
+  // instead of freezing at whatever it read on load.
+  function formatElapsed(totalSeconds) {
+    totalSeconds = Math.max(0, Math.floor(totalSeconds));
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const mm = String(m).padStart(2, "0");
+    const ss = String(s).padStart(2, "0");
+    if (h > 0) return `${h}h ${mm}m ${ss}s`;
+    if (m > 0) return `${m}m ${ss}s`;
+    return `${s}s`;
+  }
+
+  function renderElapsedCells() {
+    document.querySelectorAll("tr.build-row").forEach((row) => {
+      const cell = row.querySelector(".elapsed-cell");
+      const status = row.dataset.status;
+      const createdAtMs = new Date(row.dataset.createdAt).getTime();
+      const startedAtMs = row.dataset.startedAt ? new Date(row.dataset.startedAt).getTime() : null;
+      const finishedAtMs = row.dataset.finishedAt ? new Date(row.dataset.finishedAt).getTime() : null;
+      if (status === "queued") {
+        cell.textContent = `waiting ${formatElapsed((Date.now() - createdAtMs) / 1000)}`;
+      } else if (status === "running") {
+        const from = startedAtMs || createdAtMs;
+        cell.textContent = formatElapsed((Date.now() - from) / 1000);
+      } else if (finishedAtMs) {
+        const from = startedAtMs || createdAtMs;
+        cell.textContent = formatElapsed((finishedAtMs - from) / 1000);
+      } else {
+        cell.textContent = "-";
+      }
+    });
+  }
+  renderElapsedCells();
+  setInterval(renderElapsedCells, 1000);
+</script>
+
+{% endblock %}
